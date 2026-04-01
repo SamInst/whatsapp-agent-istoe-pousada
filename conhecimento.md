@@ -1,6 +1,4 @@
 # BASE DE CONHECIMENTO — ISTO É POUSADA
-# Atualizado em: abril/2026
-
 ---
 
 ## REGRAS DO AGENTE
