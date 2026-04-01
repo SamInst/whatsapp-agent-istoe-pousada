@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agente IA — WhatsApp</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --surface2: #1a1a24;
+    --border: #2a2a3a;
+    --green: #00ff88;
+    --green-dim: #00ff8822;
+    --yellow: #ffd60a;
+    --red: #ff4560;
+    --text: #e8e8f0;
+    --muted: #6b6b80;
+    --accent: #7c6aff;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr;
+  }
+
+  /* HEADER */
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface);
+  }
+
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 1.2rem;
+    letter-spacing: -0.02em;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .logo-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 12px var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  .logo-dot.offline { background: var(--red); box-shadow: 0 0 12px var(--red); animation: none; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.85); }
+  }
+
+  .header-status {
+    font-size: 0.72rem;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .status-badge {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .badge-online { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+  .badge-offline { background: #ff456015; color: var(--red); border: 1px solid var(--red); }
+  .badge-waiting { background: #ffd60a15; color: var(--yellow); border: 1px solid var(--yellow); }
+
+  /* LAYOUT */
+  main {
+    display: grid;
+    grid-template-columns: 280px 1fr 320px;
+    gap: 0;
+    height: calc(100vh - 65px);
+    overflow: hidden;
+  }
+
+  /* SIDEBAR */
+  .sidebar {
+    border-right: 1px solid var(--border);
+    padding: 24px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .section-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+
+  /* STATS */
+  .stat-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    text-align: center;
+  }
+
+  .stat-number {
+    font-family: 'Syne', sans-serif;
+    font-size: 2rem;
+    font-weight: 800;
+    color: var(--green);
+    line-height: 1;
+  }
+
+  .stat-label {
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  /* QR */
+  .qr-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+  }
+
+  #qr-image {
+    width: 160px; height: 160px;
+    border-radius: 8px;
+    margin: 12px auto;
+    display: block;
+    background: white;
+    padding: 8px;
+  }
+
+  .qr-hint {
+    font-size: 0.65rem;
+    color: var(--muted);
+    line-height: 1.6;
+    margin-top: 8px;
+  }
+
+  /* BUTTONS */
+  .btn {
+    display: block;
+    width: 100%;
+    padding: 10px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+  }
+
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-danger:hover { border-color: var(--red); color: var(--red); }
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+    font-weight: 500;
+  }
+  .btn-primary:hover { opacity: 0.85; color: white; }
+
+  /* CENTER — KNOWLEDGE */
+  .center {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 20px 28px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  .panel-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+  }
+
+  .panel-subtitle { font-size: 0.68rem; color: var(--muted); margin-top: 2px; }
+
+  #knowledge-editor {
+    flex: 1;
+    background: var(--bg);
+    border: none;
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.78rem;
+    line-height: 1.7;
+    padding: 24px 28px;
+    resize: none;
+    outline: none;
+    overflow-y: auto;
+  }
+
+  .editor-footer {
+    padding: 14px 28px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  .save-hint { font-size: 0.65rem; color: var(--muted); }
+
+  #save-btn {
+    padding: 8px 20px;
+    background: var(--green);
+    color: var(--bg);
+    border: none;
+    border-radius: 6px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+
+  #save-btn:hover { opacity: 0.85; }
+
+  #save-status {
+    font-size: 0.68rem;
+    color: var(--green);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  /* RIGHT — MESSAGES */
+  .right-panel {
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #messages-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .msg-item {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 0.7rem;
+    animation: slideIn 0.3s ease;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .msg-contact {
+    color: var(--accent);
+    font-family: 'Syne', sans-serif;
+    font-weight: 600;
+    font-size: 0.68rem;
+    margin-bottom: 6px;
+  }
+
+  .msg-user {
+    color: var(--muted);
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .msg-user::before { content: '→ '; color: var(--yellow); }
+  .msg-agent { color: var(--text); line-height: 1.5; }
+  .msg-agent::before { content: '← '; color: var(--green); }
+
+  .msg-time {
+    color: var(--muted);
+    font-size: 0.6rem;
+    margin-top: 6px;
+    text-align: right;
+  }
+
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 0.72rem;
+    text-align: center;
+    padding: 40px;
+  }
+
+  .empty-icon { font-size: 2.5rem; margin-bottom: 8px; }
+
+  .paused-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+  .paused-item {
+    background: #ffd60a15;
+    border: 1px solid var(--yellow);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.68rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .paused-contact { color: var(--yellow); font-weight: 500; }
+  .paused-timer { color: var(--muted); font-size: 0.62rem; }
+  .btn-resume {
+    background: none;
+    border: 1px solid var(--yellow);
+    color: var(--yellow);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.62rem;
+    cursor: pointer;
+    font-family: 'DM Mono', monospace;
+    white-space: nowrap;
+  }
+  .btn-resume:hover { background: #ffd60a22; }
+
+  .btn-gen-qr {
+    display: block;
+    width: 100%;
+    margin-top: 12px;
+    padding: 9px 0;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .btn-gen-qr:hover { opacity: 0.85; }
+  .btn-gen-qr:disabled { opacity: 0.45; cursor: default; }
+
+  /* TOAST */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--surface2);
+    border: 1px solid var(--green);
+    color: var(--green);
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-size: 0.75rem;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.3s;
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  .toast.show { opacity: 1; transform: translateY(0); }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot offline" id="status-dot"></div>
+    Agente IA
+  </div>
+  <div class="header-status">
+    <span id="status-text">Verificando...</span>
+    <span class="status-badge badge-waiting" id="status-badge">Aguardando</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div>
+      <div class="section-title">Estatísticas</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-number" id="stat-total">0</div>
+          <div class="stat-label">Total</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-number" id="stat-today">0</div>
+          <div class="stat-label">Hoje</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Conexão WhatsApp</div>
+      <div class="qr-box" id="qr-section">
+        <div class="qr-hint" id="qr-hint-text">Iniciando...</div>
+        <img id="qr-image" src="" alt="QR Code" style="display:none">
+        <div class="qr-hint" id="qr-instructions" style="display:none">
+          Abra o WhatsApp → Menu → Aparelhos conectados → Conectar aparelho
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Agente Pausado</div>
+      <div class="paused-list" id="paused-list">
+        <div style="font-size:0.65rem;color:var(--muted)" id="paused-empty">Nenhum contato pausado</div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-primary" onclick="connectWA()">↺ Reconectar</button>
+      <button class="btn btn-danger" onclick="disconnectWA()">✕ Desconectar</button>
+    </div>
+  </aside>
+
+  <!-- CENTER: KNOWLEDGE EDITOR -->
+  <section class="center">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">Base de Conhecimento</div>
+        <div class="panel-subtitle">Edite e salve — o agente usa estas informações em tempo real</div>
+      </div>
+      <span id="save-status">✓ Salvo!</span>
+    </div>
+    <textarea id="knowledge-editor" spellcheck="false" placeholder="Carregando..."></textarea>
+    <div class="editor-footer">
+      <span class="save-hint">Ctrl+S para salvar rapidamente</span>
+      <button id="save-btn" onclick="saveKnowledge()">Salvar</button>
+    </div>
+  </section>
+
+  <!-- RIGHT: MESSAGE LOG -->
+  <aside class="right-panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">Conversas</div>
+        <div class="panel-subtitle">Mensagens em tempo real</div>
+      </div>
+    </div>
+    <div id="messages-list">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">💬</div>
+        <div>Nenhuma mensagem ainda</div>
+        <div style="font-size:0.62rem">As conversas aparecerão aqui</div>
+      </div>
+    </div>
+  </aside>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const socket = io();
+let messages = [];
+
+// ── STATUS ────────────────────────────────────────────────────
+function updateStatus(connected) {
+  const dot = document.getElementById('status-dot');
+  const badge = document.getElementById('status-badge');
+  const text = document.getElementById('status-text');
+
+  if (connected) {
+    dot.className = 'logo-dot';
+    badge.className = 'status-badge badge-online';
+    badge.textContent = 'Online';
+    text.textContent = 'WhatsApp conectado';
+    document.getElementById('qr-section').innerHTML = `
+      <div style="font-size:2rem;margin:12px 0">✅</div>
+      <div style="font-size:0.72rem;color:var(--green)">Conectado!</div>
+      <div class="qr-hint" style="margin-top:8px">Seu agente está ativo e respondendo mensagens.</div>
+    `;
+  } else {
+    dot.className = 'logo-dot offline';
+    badge.className = 'status-badge badge-offline';
+    badge.textContent = 'Offline';
+    text.textContent = 'Desconectado';
+  }
+}
+
+// ── QR CODE ───────────────────────────────────────────────────
+function showQR(qrData) {
+  const section = document.getElementById('qr-section');
+  section.innerHTML = `
+    <div class="qr-hint" style="margin-bottom:8px">Escaneie com o WhatsApp</div>
+    <img src="${qrData}" style="width:160px;height:160px;border-radius:8px;display:block;margin:0 auto;background:white;padding:8px">
+    <div class="qr-hint" style="margin-top:10px">
+      WhatsApp → Menu →<br>Aparelhos conectados → Conectar
+    </div>
+    <button class="btn-gen-qr" onclick="generateQR()">↺ Gerar novo QR</button>
+  `;
+  const badge = document.getElementById('status-badge');
+  badge.className = 'status-badge badge-waiting';
+  badge.textContent = 'Aguardando scan';
+  document.getElementById('status-text').textContent = 'Escaneie o QR Code';
+}
+
+async function generateQR() {
+  const section = document.getElementById('qr-section');
+  section.innerHTML = `<div class="qr-hint" style="padding:16px">Gerando QR Code...</div>`;
+  await fetch('/api/connect', { method: 'POST' });
+  setTimeout(pollStatus, 3000);
+}
+
+// ── KNOWLEDGE ─────────────────────────────────────────────────
+let saveTimer = null;
+let externalUpdate = false;
+
+async function loadKnowledge() {
+  const res = await fetch('/api/knowledge');
+  const data = await res.json();
+  document.getElementById('knowledge-editor').value = data.content;
+}
+
+async function saveKnowledge(silent = false) {
+  const content = document.getElementById('knowledge-editor').value;
+  const res = await fetch('/api/knowledge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content })
+  });
+  const data = await res.json();
+  if (data.success) {
+    const status = document.getElementById('save-status');
+    status.style.opacity = '1';
+    setTimeout(() => status.style.opacity = '0', 2000);
+    if (!silent) showToast('Base de conhecimento salva! ✓');
+  }
+}
+
+// Auto-save 1s após parar de digitar
+document.getElementById('knowledge-editor').addEventListener('input', () => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => saveKnowledge(true), 1000);
+});
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault();
+    clearTimeout(saveTimer);
+    saveKnowledge();
+  }
+});
+
+// Sync quando o arquivo for editado externamente
+socket.on('knowledge', ({ content }) => {
+  const editor = document.getElementById('knowledge-editor');
+  const cursor = editor.selectionStart;
+  externalUpdate = true;
+  editor.value = content;
+  editor.selectionStart = editor.selectionEnd = cursor;
+  externalUpdate = false;
+  showToast('Base de conhecimento atualizada externamente ↺');
+});
+
+// ── MESSAGES ──────────────────────────────────────────────────
+function addMessage(item) {
+  document.getElementById('empty-state')?.remove();
+
+  const list = document.getElementById('messages-list');
+  const div = document.createElement('div');
+  div.className = 'msg-item';
+
+  const time = new Date(item.time).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  div.innerHTML = `
+    <div class="msg-contact">${item.contact}</div>
+    <div class="msg-user">${escHtml(item.userMessage)}</div>
+    <div class="msg-agent">${escHtml(item.agentReply)}</div>
+    <div class="msg-time">${time}</div>
+  `;
+  list.insertBefore(div, list.firstChild);
+
+  // Manter só 30 mensagens no DOM
+  while (list.children.length > 30) list.removeChild(list.lastChild);
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── STATS ─────────────────────────────────────────────────────
+async function loadStats() {
+  const res = await fetch('/api/stats');
+  const data = await res.json();
+  document.getElementById('stat-total').textContent = data.total;
+  document.getElementById('stat-today').textContent = data.today;
+}
+
+// ── ACTIONS ───────────────────────────────────────────────────
+async function connectWA() {
+  await fetch('/api/connect', { method: 'POST' });
+  showToast('Reconectando...');
+  setTimeout(pollStatus, 2000);
+}
+
+async function disconnectWA() {
+  if (!confirm('Desconectar o WhatsApp?')) return;
+  await fetch('/api/disconnect', { method: 'POST' });
+  updateStatus(false);
+  showToast('WhatsApp desconectado.');
+}
+
+// ── TOAST ─────────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ── PAUSED CONTACTS ───────────────────────────────────────────
+const pausedMap = new Map();
+
+function renderPaused() {
+  const list = document.getElementById('paused-list');
+  const empty = document.getElementById('paused-empty');
+  list.querySelectorAll('.paused-item').forEach(el => el.remove());
+
+  if (pausedMap.size === 0) {
+    if (empty) empty.style.display = '';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  for (const [contactId, until] of pausedMap) {
+    const remaining = Math.max(0, Math.round((until - Date.now()) / 60000));
+    const div = document.createElement('div');
+    div.className = 'paused-item';
+    div.dataset.contact = contactId;
+    div.innerHTML = `
+      <div>
+        <div class="paused-contact">${contactId}</div>
+        <div class="paused-timer">retoma em ~${remaining}min</div>
+      </div>
+      <button class="btn-resume" onclick="resumeContact('${contactId}')">retomar</button>
+    `;
+    list.appendChild(div);
+  }
+}
+
+async function resumeContact(contactId) {
+  await fetch('/api/resume/' + contactId, { method: 'POST' });
+  pausedMap.delete(contactId);
+  renderPaused();
+  showToast('Agente retomado para ' + contactId);
+}
+
+async function loadPaused() {
+  const res = await fetch('/api/paused');
+  const items = await res.json();
+  pausedMap.clear();
+  items.forEach(({ contactId, until }) => pausedMap.set(contactId, until));
+  renderPaused();
+}
+
+// Atualizar timers a cada minuto
+setInterval(() => { if (pausedMap.size > 0) renderPaused(); }, 60000);
+
+// ── SOCKET EVENTS ─────────────────────────────────────────────
+socket.on('qr', ({ qr }) => showQR(qr));
+socket.on('status', ({ connected }) => updateStatus(connected));
+socket.on('message', (msg) => {
+  loadStats();
+});
+socket.on('pause', ({ contactId, until }) => {
+  pausedMap.set(contactId, until);
+  renderPaused();
+  showToast('⏸ Agente pausado 30min para ' + contactId);
+});
+socket.on('resume', ({ contactId }) => {
+  pausedMap.delete(contactId);
+  renderPaused();
+});
+
+// ── POLL STATUS ───────────────────────────────────────────────
+async function pollStatus() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    updateStatus(data.connected);
+
+    if (!data.connected) {
+      const qrRes = await fetch('/api/qr');
+      const qrData = await qrRes.json();
+      if (qrData.qr) {
+        showQR(qrData.qr);
+      } else if (qrData.waiting) {
+        document.getElementById('qr-section').innerHTML = `
+          <div class="qr-hint" style="padding:12px 0 4px">Gerando QR Code...</div>
+        `;
+      } else {
+        document.getElementById('qr-section').innerHTML = `
+          <div class="qr-hint" style="padding:8px 0 4px">WhatsApp desconectado.</div>
+          <button class="btn-gen-qr" onclick="generateQR()">↺ Gerar QR Code</button>
+        `;
+      }
+    }
+
+    document.getElementById('stat-total').textContent = data.messagesHandled;
+  } catch {}
+}
+
+// ── LOAD MESSAGES ─────────────────────────────────────────────
+async function loadMessages() {
+  const res = await fetch('/api/messages');
+  const items = await res.json();
+  if (items.length === 0) return;
+  document.getElementById('empty-state')?.remove();
+  items.forEach(addMessage);
+}
+
+// ── INIT ──────────────────────────────────────────────────────
+pollStatus();
+loadKnowledge();
+loadStats();
+loadMessages();
+loadPaused();
+setInterval(loadStats, 15000);
+setInterval(pollStatus, 10000);
+</script>
+</body>
+</html>
