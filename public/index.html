@@ -529,12 +529,20 @@ function updateStatus(connected) {
 }
 
 // ── QR CODE ───────────────────────────────────────────────────
+let qrCountdownInterval = null;
+const QR_TTL = 20;
+
 function showQR(qrData) {
+  clearInterval(qrCountdownInterval);
   const section = document.getElementById('qr-section');
   section.innerHTML = `
     <div class="qr-hint" style="margin-bottom:8px">Escaneie com o WhatsApp</div>
     <img src="${qrData}" style="width:160px;height:160px;border-radius:8px;display:block;margin:0 auto;background:white;padding:8px">
-    <div class="qr-hint" style="margin-top:10px">
+    <div style="margin-top:10px;display:flex;align-items:center;justify-content:center;gap:6px">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--muted);flex-shrink:0"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <span class="qr-hint" id="qr-countdown" style="margin:0">expira em <b id="qr-secs" style="color:var(--yellow)">${QR_TTL}s</b></span>
+    </div>
+    <div class="qr-hint" style="margin-top:6px">
       WhatsApp → Menu →<br>Aparelhos conectados → Conectar
     </div>
     <button class="btn-gen-qr" onclick="generateQR()">↺ Gerar novo QR</button>
@@ -543,6 +551,17 @@ function showQR(qrData) {
   badge.className = 'status-badge badge-waiting';
   badge.textContent = 'Aguardando scan';
   document.getElementById('status-text').textContent = 'Escaneie o QR Code';
+
+  let secs = QR_TTL;
+  qrCountdownInterval = setInterval(() => {
+    secs--;
+    const el = document.getElementById('qr-secs');
+    if (!el) { clearInterval(qrCountdownInterval); return; }
+    el.textContent = secs + 's';
+    if (secs <= 5) el.style.color = 'var(--red)';
+    else if (secs <= 10) el.style.color = 'var(--yellow)';
+    if (secs <= 0) clearInterval(qrCountdownInterval);
+  }, 1000);
 }
 
 async function generateQR() {
@@ -555,6 +574,7 @@ async function generateQR() {
 // ── KNOWLEDGE ─────────────────────────────────────────────────
 let saveTimer = null;
 let externalUpdate = false;
+let waitingQrSince = null;
 
 async function loadKnowledge() {
   const res = await fetch('/api/knowledge');
@@ -709,6 +729,13 @@ setInterval(() => { if (pausedMap.size > 0) renderPaused(); }, 60000);
 // ── SOCKET EVENTS ─────────────────────────────────────────────
 socket.on('qr', ({ qr }) => showQR(qr));
 socket.on('status', ({ connected }) => updateStatus(connected));
+socket.on('qr_expired', ({ message }) => {
+  clearInterval(qrCountdownInterval);
+  document.getElementById('qr-section').innerHTML = `
+    <div class="qr-hint" style="padding:8px 0 4px;color:var(--yellow)">${message}</div>
+    <button class="btn-gen-qr" onclick="generateQR()">↺ Gerar QR Code</button>
+  `;
+});
 socket.on('message', (msg) => {
   loadStats();
 });
@@ -727,17 +754,28 @@ async function pollStatus() {
   try {
     const res = await fetch('/api/status');
     const data = await res.json();
+    if (data.connected) { waitingQrSince = null; clearInterval(qrCountdownInterval); }
     updateStatus(data.connected);
 
     if (!data.connected) {
       const qrRes = await fetch('/api/qr');
       const qrData = await qrRes.json();
       if (qrData.qr) {
+        waitingQrSince = null;
         showQR(qrData.qr);
       } else if (qrData.waiting) {
-        document.getElementById('qr-section').innerHTML = `
-          <div class="qr-hint" style="padding:12px 0 4px">Gerando QR Code...</div>
-        `;
+        if (!waitingQrSince) waitingQrSince = Date.now();
+        const waitSecs = Math.round((Date.now() - waitingQrSince) / 1000);
+        if (waitSecs > 20) {
+          document.getElementById('qr-section').innerHTML = `
+            <div class="qr-hint" style="padding:8px 0 4px;color:var(--yellow)">Não foi possível gerar o QR.</div>
+            <button class="btn-gen-qr" onclick="generateQR()">↺ Tentar novamente</button>
+          `;
+        } else {
+          document.getElementById('qr-section').innerHTML = `
+            <div class="qr-hint" style="padding:12px 0 4px">Gerando QR Code...</div>
+          `;
+        }
       } else {
         document.getElementById('qr-section').innerHTML = `
           <div class="qr-hint" style="padding:8px 0 4px">WhatsApp desconectado.</div>

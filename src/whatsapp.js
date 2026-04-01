@@ -12,6 +12,27 @@ let reconnectTimer = null;
 let isStarting = false;
 let qrWasShown = false;
 
+// Fila de mensagens para evitar chamadas paralelas à API
+const messageQueue = [];
+let processingQueue = false;
+
+async function processQueue() {
+  if (processingQueue) return;
+  processingQueue = true;
+  while (messageQueue.length > 0) {
+    const { from, text } = messageQueue.shift();
+    try {
+      const reply = await agent.reply(from, text);
+      if (sock) await sock.sendMessage(from, { text: reply });
+      console.log(`📤 Resposta para ${from}: ${reply.substring(0, 80)}...`);
+      if (global.io) global.io.emit('message', { from, text: reply, direction: 'outgoing', time: new Date().toISOString() });
+    } catch (err) {
+      console.error(`Erro ao responder ${from}:`, err.message);
+    }
+  }
+  processingQueue = false;
+}
+
 function hasCredentials() {
   const credsPath = path.join(__dirname, '../auth_info/creds.json');
   if (!fs.existsSync(credsPath)) return false;
@@ -24,7 +45,11 @@ function hasCredentials() {
 }
 
 async function start() {
-  if (isStarting) return;
+  console.log(`[WA] start() chamado — isStarting=${isStarting} hasCredentials=${hasCredentials()}`);
+  if (isStarting) {
+    console.log('[WA] já está iniciando, abortando.');
+    return;
+  }
   isStarting = true;
   clearTimeout(reconnectTimer);
 
@@ -34,12 +59,23 @@ async function start() {
     sock = null;
   }
 
-  const { state, saveCreds } = await useMultiFileAuthState(
-    path.join(__dirname, '../auth_info')
-  );
+  let state, saveCreds, version;
+  try {
+    console.log('[WA] carregando auth_info...');
+    ({ state, saveCreds } = await useMultiFileAuthState(
+      path.join(__dirname, '../auth_info')
+    ));
+    console.log('[WA] buscando versão do Baileys...');
+    ({ version } = await fetchLatestBaileysVersion());
+    console.log('[WA] versão obtida:', version);
+  } catch (err) {
+    isStarting = false;
+    console.error('[WA] ❌ Erro ao inicializar:', err.message, err.stack);
+    if (global.io) global.io.emit('qr_expired', { message: 'Erro ao conectar. Clique em Reconectar.' });
+    return;
+  }
 
-  const { version } = await fetchLatestBaileysVersion();
-
+  console.log('[WA] criando socket...');
   sock = makeWASocket({
     version,
     auth: state,
@@ -50,13 +86,15 @@ async function start() {
 
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
+    console.log(`[WA] connection.update — connection=${connection} qr=${!!qr} lastDisconnect.statusCode=${lastDisconnect?.error?.output?.statusCode}`);
 
     if (qr) {
       qrWasShown = true;
       currentQR = await qrcode.toDataURL(qr);
       connected = false;
-      console.log('📱 QR Code gerado — acesse o dashboard para escanear');
+      console.log('[WA] 📱 QR Code gerado, emitindo via socket...');
       if (global.io) global.io.emit('qr', { qr: currentQR });
+      else console.warn('[WA] global.io não disponível, QR não emitido via socket!');
     }
 
     if (connection === 'open') {
@@ -64,7 +102,7 @@ async function start() {
       qrWasShown = false;
       connected = true;
       currentQR = null;
-      console.log('✅ WhatsApp conectado!');
+      console.log('[WA] ✅ WhatsApp conectado!');
       if (global.io) global.io.emit('status', { connected: true });
     }
 
@@ -75,26 +113,30 @@ async function start() {
 
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const loggedOut = statusCode === DisconnectReason.loggedOut;
+      console.log(`[WA] conexão fechada — statusCode=${statusCode} loggedOut=${loggedOut} qrWasShown=${qrWasShown}`);
 
       if (loggedOut) {
-        console.log('🚪 Sessão encerrada — escaneie o QR para reconectar.');
-        // FIX: avisar o dashboard que precisa de novo QR
+        console.log('[WA] 🚪 Sessão encerrada — limpando credenciais.');
+        const credsPath = path.join(__dirname, '../auth_info/creds.json');
+        try { if (fs.existsSync(credsPath)) fs.unlinkSync(credsPath); } catch (_) {}
         if (global.io) global.io.emit('qr_expired', { message: 'Sessão encerrada. Clique em Reconectar.' });
         return;
       }
 
-      // FIX: QR expirou sem scan — avisar dashboard em vez de ficar carregando
       if (qrWasShown) {
         qrWasShown = false;
-        console.log('⏳ QR expirou sem scan — aguardando ação do usuário.');
+        console.log('[WA] ⏳ QR expirou sem scan.');
         if (global.io) global.io.emit('qr_expired', { message: 'QR Code expirou. Clique em Reconectar.' });
         return;
       }
 
       if (hasCredentials()) {
-        console.log('🔄 Reconectando...');
+        console.log('[WA] 🔄 Reconectando em 5s...');
         if (global.io) global.io.emit('status', { connected: false });
         reconnectTimer = setTimeout(() => start(), 5000);
+      } else {
+        console.log('[WA] sem credenciais, aguardando ação do usuário.');
+        if (global.io) global.io.emit('qr_expired', { message: 'Desconectado. Clique em Reconectar.' });
       }
     }
   });
@@ -137,23 +179,8 @@ async function start() {
         continue;
       }
 
-      try {
-        const reply = await agent.reply(from, text);
-        await sock.sendMessage(from, { text: reply });
-
-        console.log(`📤 Resposta para ${from}: ${reply.substring(0, 80)}...`);
-
-        if (global.io) {
-          global.io.emit('message', {
-            from,
-            text: reply,
-            direction: 'outgoing',
-            time: new Date().toISOString(),
-          });
-        }
-      } catch (err) {
-        console.error('Erro ao gerar resposta:', err.message);
-      }
+      messageQueue.push({ from, text });
+      processQueue();
     }
   });
 }
@@ -168,6 +195,9 @@ async function disconnect() {
   }
   connected = false;
   currentQR = null;
+  // Limpar credenciais para que o próximo start() gere um novo QR
+  const credsPath = path.join(__dirname, '../auth_info/creds.json');
+  try { if (fs.existsSync(credsPath)) fs.unlinkSync(credsPath); } catch (_) {}
 }
 
 function getQR() {
