@@ -3,20 +3,18 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const jwt = require('jsonwebtoken');
 const { createServer } = require('http');
-const { Server } = require('socket.io') ;
+const { Server } = require('socket.io');
 
-// Importar módulos internos
 const whatsapp = require('./whatsapp');
 const agent = require('./agent');
 
 const app = express();
 const httpServer = createServer(app);
 
-// Socket.IO para atualizações em tempo real no dashboard
 let io;
 try {
-  const { Server } = require('socket.io');
   io = new Server(httpServer, { cors: { origin: '*' } });
 } catch {
   io = { emit: () => {} };
@@ -26,13 +24,41 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Exportar io para outros módulos
 global.io = io;
 
-// ── ROTAS DA API ──────────────────────────────────────────────
+const JWT_SECRET = process.env.JWT_SECRET || 'agente-ia-secret-local';
 
-// Status geral
-app.get('/api/status', (req, res) => {
+
+// ── AUTH MIDDLEWARE ───────────────────────────────────────────
+
+function requireAuth(req, res, next) {
+  const header = req.headers['authorization'];
+  const token = header && header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Não autenticado' });
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).json({ error: 'Token inválido ou expirado' });
+  }
+}
+
+// ── LOGIN ─────────────────────────────────────────────────────
+
+app.post('/api/login', (req, res) => {
+  const { username } = req.body;
+  const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '7d' });
+  res.json({ token });
+});
+
+// Redirecionar raiz para login se não autenticado (tratado no front)
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/index.html'));
+});
+
+// ── ROTAS DA API (protegidas) ─────────────────────────────────
+
+app.get('/api/status', requireAuth, (req, res) => {
   res.json({
     connected: whatsapp.isConnected(),
     businessName: process.env.BUSINESS_NAME || 'Meu Negócio',
@@ -40,8 +66,7 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// QR Code para conectar WhatsApp
-app.get('/api/qr', (req, res) => {
+app.get('/api/qr', requireAuth, (req, res) => {
   const qr = whatsapp.getQR();
   if (qr) {
     res.json({ qr });
@@ -54,21 +79,18 @@ app.get('/api/qr', (req, res) => {
 
 const knowledgePath = path.join(__dirname, '../conhecimento.md');
 
-// Ler base de conhecimento
-app.get('/api/knowledge', (req, res) => {
+app.get('/api/knowledge', requireAuth, (req, res) => {
   const content = fs.readFileSync(knowledgePath, 'utf-8');
   res.json({ content });
 });
 
-// Atualizar base de conhecimento
-app.post('/api/knowledge', (req, res) => {
+app.post('/api/knowledge', requireAuth, (req, res) => {
   const { content } = req.body;
   if (content === undefined) return res.status(400).json({ error: 'Conteúdo vazio' });
   fs.writeFileSync(knowledgePath, content, 'utf-8');
   res.json({ success: true });
 });
 
-// Observar o arquivo e emitir via socket quando alterado externamente
 let lastEmittedContent = null;
 fs.watch(knowledgePath, () => {
   try {
@@ -80,44 +102,37 @@ fs.watch(knowledgePath, () => {
   } catch (_) {}
 });
 
-// Histórico de mensagens
-app.get('/api/messages', (req, res) => {
+app.get('/api/messages', requireAuth, (req, res) => {
   res.json(agent.getHistory());
 });
 
-// Estatísticas
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', requireAuth, (req, res) => {
   res.json(agent.getStats());
 });
 
-// Listar contatos pausados
-app.get('/api/paused', (_req, res) => {
+app.get('/api/paused', requireAuth, (_req, res) => {
   res.json(agent.getPausedContacts());
 });
 
-// Pausar agente para um contato manualmente
-app.post('/api/pause/:contactId', (req, res) => {
+app.post('/api/pause/:contactId', requireAuth, (req, res) => {
   const jid = req.params.contactId + '@s.whatsapp.net';
   const minutes = Number(req.body.minutes) || 30;
   agent.pauseContact(jid, minutes);
   res.json({ success: true });
 });
 
-// Retomar agente para um contato
-app.post('/api/resume/:contactId', (req, res) => {
+app.post('/api/resume/:contactId', requireAuth, (req, res) => {
   const jid = req.params.contactId + '@s.whatsapp.net';
   agent.resumeContact(jid);
   res.json({ success: true });
 });
 
-// Desconectar WhatsApp
-app.post('/api/disconnect', async (req, res) => {
+app.post('/api/disconnect', requireAuth, async (req, res) => {
   await whatsapp.disconnect();
   res.json({ success: true });
 });
 
-// Iniciar conexão WhatsApp
-app.post('/api/connect', async (req, res) => {
+app.post('/api/connect', requireAuth, async (req, res) => {
   whatsapp.start();
   res.json({ success: true, message: 'Iniciando conexão...' });
 });
@@ -128,7 +143,7 @@ const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {
   console.log(`\n🚀 Servidor rodando em http://localhost:${PORT}`);
   console.log(`📱 Acesse o dashboard para conectar seu WhatsApp\n`);
+  
 });
 
-// Iniciar WhatsApp automaticamente
 whatsapp.start();

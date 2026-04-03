@@ -23,6 +23,7 @@ async function processQueue() {
     const { from, text } = messageQueue.shift();
     try {
       const reply = await agent.reply(from, text);
+      if (!reply) continue;
       if (sock) await sock.sendMessage(from, { text: reply });
       console.log(`📤 Resposta para ${from}: ${reply.substring(0, 80)}...`);
       if (global.io) global.io.emit('message', { from, text: reply, direction: 'outgoing', time: new Date().toISOString() });
@@ -120,6 +121,14 @@ async function start() {
         const credsPath = path.join(__dirname, '../auth_info/creds.json');
         try { if (fs.existsSync(credsPath)) fs.unlinkSync(credsPath); } catch (_) {}
         if (global.io) global.io.emit('qr_expired', { message: 'Sessão encerrada. Clique em Reconectar.' });
+        return;
+      }
+
+      // 515 = restartRequired: WhatsApp pediu reinício após scan, reconectar automaticamente
+      if (statusCode === 515) {
+        qrWasShown = false;
+        console.log('[WA] 🔄 Restart solicitado pelo servidor (515) — reconectando em 3s...');
+        reconnectTimer = setTimeout(() => start(), 3000);
         return;
       }
 

@@ -59,7 +59,14 @@ function loadKnowledge() {
 }
 
 // Gerar resposta
+const CLOSING_PATTERN = /^(ok|certo|entendi|beleza|blz|ótimo|otimo|perfeito|obrigad[oa]|obg|valeu|vlw|tudo (bem|ok|certo|bom)|show|boa|👍|🙏|😊|✅|👌|de nada|tá|ta|sim|não precisa|nao precisa|até mais|ate mais|tchau|flw|falou|foi|é isso|e isso)[!\s.,]*$/i;
+
 async function reply(contactId, userMessage) {
+  if (CLOSING_PATTERN.test(userMessage.trim())) {
+    console.log(`[agent] mensagem de encerramento ignorada de ${contactId}: "${userMessage}"`);
+    return null;
+  }
+
   const knowledge = loadKnowledge();
   const businessName = process.env.BUSINESS_NAME || 'Meu Negócio';
 
@@ -77,26 +84,12 @@ async function reply(contactId, userMessage) {
 
   const systemPrompt = `Você é um assistente virtual de atendimento ao cliente da empresa "${businessName}".
 
+  Mensagem de boas vindas: "Olá! Bem-vindo ao ${businessName}. Como posso ajudar você hoje?".
+  Mensagem de despedida: "Tudo bem, volte sempre!".
+
 Sua missão é responder dúvidas dos clientes de forma clara, objetiva e educada com base nas informações abaixo.
 
-BASE DE CONHECIMENTO:
-${knowledge}
-
-INSTRUÇÕES IMPORTANTES:
-- Responda sempre em português do Brasil
-- Seja CURTO e DIRETO — máximo 2-3 frases por resposta
-- Exceção: quando o cliente perguntar sobre preços, valores, senhas de Wi-Fi ou listas de itens, responda de forma completa e não omita nenhum dado
-- Ao informar senhas de Wi-Fi, use este formato exato:
-  📶 *Rede:* NomeDaRede
-  🔑 *Senha:* \`\`\`senha\`\`\`
-- Ao informar preços/tarifas, use este formato exato (um item por linha):
-  🏷️ *Nome do item* — R$ 00,00
-- Nunca use parágrafos longos para informações simples
-- Use no máximo 1 emoji por mensagem
-- Nunca invente informações que não estão na base de conhecimento
-- Se não souber a resposta, diga apenas: "Vou verificar e te retorno em breve!"
-- Se o cliente quiser falar com humano, diga apenas: "Claro, aguarda um momento que chamo um atendente!"
-- Não mencione que você é uma IA, a menos que o cliente pergunte diretamente`;
+${knowledge}`;
 
   const response = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
@@ -104,7 +97,7 @@ INSTRUÇÕES IMPORTANTES:
       { role: 'system', content: systemPrompt },
       ...history,
     ],
-    max_tokens: 300,
+    max_tokens: 1000,
     temperature: 0.7,
   });
 
