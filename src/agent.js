@@ -4,6 +4,7 @@ const Groq = require('groq-sdk');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+
 // Histórico de conversas por contato (em memória)
 const conversations = new Map();
 // Contatos pausados: contactId → timestamp de retomada
@@ -68,28 +69,17 @@ async function reply(contactId, userMessage) {
   }
 
   const knowledge = loadKnowledge();
-  const businessName = process.env.BUSINESS_NAME || 'Meu Negócio';
 
-  // Histórico de contexto do contato (últimas 10 mensagens)
   if (!conversations.has(contactId)) {
     conversations.set(contactId, []);
   }
   const history = conversations.get(contactId);
 
-  // Adicionar mensagem do usuário ao histórico
   history.push({ role: 'user', content: userMessage });
 
-  // Manter só as últimas 10 trocas
   if (history.length > 20) history.splice(0, 2);
 
-  const systemPrompt = `Você é um assistente virtual de atendimento ao cliente da empresa "${businessName}".
-
-  Mensagem de boas vindas: "Olá! Bem-vindo ao ${businessName}. Como posso ajudar você hoje?".
-  Mensagem de despedida: "Tudo bem, volte sempre!".
-
-Sua missão é responder dúvidas dos clientes de forma clara, objetiva e educada com base nas informações abaixo.
-
-${knowledge}`;
+  const systemPrompt = knowledge;
 
   const response = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
